@@ -51,7 +51,7 @@ npm run dev
 
 ## Production Site:
 
-[https://daily.arafatbytes.live/]()
+[https://daily.arafatbytes.live/](https://daily.arafatbytes.live/)
 
 ## Usage
 
