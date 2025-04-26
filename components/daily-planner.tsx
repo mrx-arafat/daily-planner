@@ -4,9 +4,9 @@ import type React from "react";
 
 import { useEffect, useState, useRef } from "react";
 import { format } from "date-fns";
-import { Save, Download } from "lucide-react";
+import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/use-toast";
+import { useToast } from "@/components/ui/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 
 interface TaskItem {
@@ -46,6 +46,7 @@ export default function DailyPlanner({
   initialDate,
   gistId = DEFAULT_GIST_ID,
 }: DailyPlannerProps) {
+  const { toast } = useToast();
   const [viewMode, setViewMode] = useState<"all" | "custom">("all");
   const [date, setDate] = useState(() => {
     if (initialDate) return initialDate;
@@ -79,11 +80,10 @@ export default function DailyPlanner({
     {}
   );
   const [recurringTasks, setRecurringTasks] = useState<string[]>([]);
-  const [isExporting, setIsExporting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const printableContentRef = useRef<HTMLDivElement>(null);
   const plannerRef = useRef<HTMLDivElement>(null);
+  const printableContentRef = useRef<HTMLDivElement>(null);
 
   // Function to get Gist content
   const getGistContent = async () => {
@@ -356,8 +356,8 @@ export default function DailyPlanner({
   const saveToGist = async () => {
     if (!gistId) {
       toast({
-        title: "Error",
-        description: "No Gist ID provided",
+        title: "Missing Configuration",
+        description: "No Gist ID provided for saving.",
         variant: "destructive",
       });
       return;
@@ -387,16 +387,18 @@ export default function DailyPlanner({
 
     if (success) {
       toast({
-        title: "✓ Saved to Gist",
+        title: "Changes Saved",
         description: `Your planner for ${format(
           new Date(date),
           "MMMM d, yyyy"
-        )} has been saved.`,
+        )} has been updated.`,
+        variant: "default",
       });
     } else {
       toast({
-        title: "Error saving to Gist",
-        description: "Please check your Gist ID and token.",
+        title: "Save Failed",
+        description:
+          "Could not save changes. Please verify your Gist ID and token.",
         variant: "destructive",
       });
     }
@@ -556,82 +558,6 @@ export default function DailyPlanner({
     }
   };
 
-  const exportToImage = async () => {
-    try {
-      setIsExporting(true);
-      // Dynamically import html2canvas
-      const html2canvas = (await import("html2canvas")).default;
-
-      if (!printableContentRef.current) return;
-
-      toast({
-        title: "Generating image...",
-        description: "Please wait while we prepare your planner image.",
-      });
-
-      // Wait a moment for the UI to update with the exporting state
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // On mobile, we need to ensure the content fits properly
-      const isMobile = window.innerWidth < 768;
-      const scale = isMobile ? 1 : 2; // Lower scale on mobile to prevent memory issues
-
-      const canvas = await html2canvas(printableContentRef.current, {
-        scale: scale,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-        windowWidth: printableContentRef.current.offsetWidth * scale,
-        windowHeight: printableContentRef.current.offsetHeight * scale,
-        onclone: (document, element) => {
-          // Add print-specific styling to the cloned element
-          element.style.width = `${printableContentRef.current?.offsetWidth}px`;
-          element.style.padding = "20px";
-          element.style.boxShadow = "none";
-
-          // Make sure all inputs are visible in the exported image
-          const inputs = element.querySelectorAll("input");
-          inputs.forEach((input: HTMLInputElement) => {
-            input.style.border = "1px solid #e2e8f0";
-          });
-
-          // On mobile, adjust font sizes for better readability in the exported image
-          if (isMobile) {
-            element.style.fontSize = "14px";
-            const headers = element.querySelectorAll("h1, h2");
-            headers.forEach((header: HTMLElement) => {
-              header.style.fontSize = header.tagName === "H1" ? "24px" : "16px";
-            });
-          }
-        },
-      });
-
-      const image = canvas.toDataURL("image/png");
-      const link = document.createElement("a");
-      link.download = `daily-planner-${format(
-        new Date(date),
-        "yyyy-MM-dd"
-      )}.png`;
-      link.href = image;
-      link.click();
-
-      toast({
-        title: "Success!",
-        description: "Your planner has been exported as an image.",
-      });
-    } catch (error) {
-      console.error("Error exporting planner:", error);
-      toast({
-        title: "Export failed",
-        description: "There was an error exporting your planner.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
   const dayOfWeek = date ? new Date(date).getDay() : null;
 
   return (
@@ -645,24 +571,44 @@ export default function DailyPlanner({
           <h1 className="text-3xl sm:text-4xl font-light text-gray-600">
             DAILY PERSONAL PLANNER
           </h1>
-          {!isExporting && (
-            <div className="flex gap-2 w-full sm:w-auto">
-              <Button
-                onClick={exportToImage}
-                className="flex items-center gap-2 flex-1 sm:flex-auto justify-center"
-              >
-                <Download className="h-4 w-4" />
-                Export
-              </Button>
-              <Button
-                onClick={saveToGist}
-                className="flex items-center gap-2 flex-1 sm:flex-auto justify-center"
-              >
-                <Save className="h-4 w-4" />
-                Save
-              </Button>
-            </div>
-          )}
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Button
+              onClick={saveToGist}
+              className="flex items-center gap-2 flex-1 sm:flex-auto justify-center"
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <>
+                  <svg
+                    className="animate-spin -ml-1 mr-2 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  Save
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-4 sm:gap-0">
@@ -697,76 +643,72 @@ export default function DailyPlanner({
               <h2 className="text-gray-600 uppercase tracking-wide mb-2 sm:mb-0">
                 TODAY&apos;S SCHEDULE
               </h2>
-              {!isExporting && (
-                <div className="ml-0 sm:ml-auto flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <div className="flex items-center w-full sm:w-auto">
-                    <label className="text-sm text-gray-500 mr-2">View:</label>
-                    <select
-                      value={viewMode}
-                      onChange={(e) =>
-                        setViewMode(e.target.value as "all" | "custom")
-                      }
-                      className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
-                    >
-                      <option value="all">All Hours</option>
-                      <option value="custom">Custom Range</option>
-                    </select>
-                  </div>
-
-                  {viewMode === "custom" && (
-                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
-                      <div className="flex items-center w-1/2 sm:w-auto">
-                        <label className="text-sm text-gray-500 mr-2">
-                          From:
-                        </label>
-                        <select
-                          value={startHour}
-                          onChange={(e) =>
-                            setStartHour(Number.parseInt(e.target.value))
-                          }
-                          className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
-                        >
-                          {Array.from({ length: 24 }, (_, i) => (
-                            <option key={i} value={i}>
-                              {i === 0
-                                ? "12 AM"
-                                : i < 12
-                                ? `${i} AM`
-                                : i === 12
-                                ? "12 PM"
-                                : `${i - 12} PM`}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex items-center w-1/2 sm:w-auto">
-                        <label className="text-sm text-gray-500 mr-2">
-                          To:
-                        </label>
-                        <select
-                          value={endHour}
-                          onChange={(e) =>
-                            setEndHour(Number.parseInt(e.target.value))
-                          }
-                          className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
-                        >
-                          {Array.from({ length: 24 }, (_, i) => (
-                            <option key={i} value={i}>
-                              {i === 0
-                                ? "12 AM"
-                                : i < 12
-                                ? `${i} AM`
-                                : i === 12
-                                ? "12 PM"
-                                : `${i - 12} PM`}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
+              <div className="ml-0 sm:ml-auto flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                <div className="flex items-center w-full sm:w-auto">
+                  <label className="text-sm text-gray-500 mr-2">View:</label>
+                  <select
+                    value={viewMode}
+                    onChange={(e) =>
+                      setViewMode(e.target.value as "all" | "custom")
+                    }
+                    className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
+                  >
+                    <option value="all">All Hours</option>
+                    <option value="custom">Custom Range</option>
+                  </select>
                 </div>
-              )}
+
+                {viewMode === "custom" && (
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+                    <div className="flex items-center w-1/2 sm:w-auto">
+                      <label className="text-sm text-gray-500 mr-2">
+                        From:
+                      </label>
+                      <select
+                        value={startHour}
+                        onChange={(e) =>
+                          setStartHour(Number.parseInt(e.target.value))
+                        }
+                        className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
+                      >
+                        {Array.from({ length: 24 }, (_, i) => (
+                          <option key={i} value={i}>
+                            {i === 0
+                              ? "12 AM"
+                              : i < 12
+                              ? `${i} AM`
+                              : i === 12
+                              ? "12 PM"
+                              : `${i - 12} PM`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center w-1/2 sm:w-auto">
+                      <label className="text-sm text-gray-500 mr-2">To:</label>
+                      <select
+                        value={endHour}
+                        onChange={(e) =>
+                          setEndHour(Number.parseInt(e.target.value))
+                        }
+                        className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
+                      >
+                        {Array.from({ length: 24 }, (_, i) => (
+                          <option key={i} value={i}>
+                            {i === 0
+                              ? "12 AM"
+                              : i < 12
+                              ? `${i} AM`
+                              : i === 12
+                              ? "12 PM"
+                              : `${i - 12} PM`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
@@ -789,7 +731,6 @@ export default function DailyPlanner({
                       }
                       className="flex-1 border-b border-gray-300 px-2 py-1 focus:outline-none focus:border-gray-500"
                       placeholder=""
-                      readOnly={isExporting}
                     />
                   </div>
                 ))}
@@ -807,7 +748,6 @@ export default function DailyPlanner({
                   onChange={(e) => updateGratefulItem(index, e.target.value)}
                   className="w-full border-b border-gray-300 px-2 py-1 mb-4 focus:outline-none focus:border-gray-500"
                   placeholder=""
-                  readOnly={isExporting}
                 />
               ))}
             </div>
@@ -823,10 +763,9 @@ export default function DailyPlanner({
                 <div key={index} className="flex items-center mb-4">
                   <div
                     className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      !isExporting ? "cursor-pointer" : ""
-                    } ${item.completed ? "bg-gray-400" : "bg-gray-200"}`}
+                      item.completed ? "bg-gray-400" : "bg-gray-200"
+                    }`}
                     onClick={() =>
-                      !isExporting &&
                       updateTaskList(
                         mustDoItems,
                         setMustDoItems,
@@ -853,9 +792,8 @@ export default function DailyPlanner({
                           item.completed ? "text-gray-400 line-through" : ""
                         }`}
                         placeholder=""
-                        readOnly={isExporting}
                       />
-                      {item.text && !isExporting && (
+                      {item.text && (
                         <div className="flex items-center mt-1 sm:mt-0 sm:ml-2 space-x-2">
                           <select
                             value={timeEstimates[`must-${index}`] || ""}
@@ -904,10 +842,9 @@ export default function DailyPlanner({
                 <div key={index} className="flex items-center mb-4">
                   <div
                     className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      !isExporting ? "cursor-pointer" : ""
-                    } ${item.completed ? "bg-gray-400" : "bg-gray-200"}`}
+                      item.completed ? "bg-gray-400" : "bg-gray-200"
+                    }`}
                     onClick={() =>
-                      !isExporting &&
                       updateTaskList(
                         secondPriorityItems,
                         setSecondPriorityItems,
@@ -934,9 +871,8 @@ export default function DailyPlanner({
                           item.completed ? "text-gray-400 line-through" : ""
                         }`}
                         placeholder=""
-                        readOnly={isExporting}
                       />
-                      {item.text && !isExporting && (
+                      {item.text && (
                         <div className="flex items-center mt-1 sm:mt-0 sm:ml-2 space-x-2">
                           <select
                             value={timeEstimates[`second-${index}`] || ""}
@@ -985,10 +921,9 @@ export default function DailyPlanner({
                 <div key={index} className="flex items-center mb-4">
                   <div
                     className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      !isExporting ? "cursor-pointer" : ""
-                    } ${item.completed ? "bg-gray-400" : "bg-gray-200"}`}
+                      item.completed ? "bg-gray-400" : "bg-gray-200"
+                    }`}
                     onClick={() =>
-                      !isExporting &&
                       updateTaskList(
                         lessonsOfTheDay,
                         setLessonsOfTheDay,
@@ -1015,9 +950,8 @@ export default function DailyPlanner({
                           item.completed ? "text-gray-400 line-through" : ""
                         }`}
                         placeholder=""
-                        readOnly={isExporting}
                       />
-                      {item.text && !isExporting && (
+                      {item.text && (
                         <div className="flex items-center mt-1 sm:mt-0 sm:ml-2 space-x-2">
                           <select
                             value={timeEstimates[`extra-${index}`] || ""}
@@ -1066,10 +1000,9 @@ export default function DailyPlanner({
                 <div key={index} className="flex items-center mb-4">
                   <div
                     className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      !isExporting ? "cursor-pointer" : ""
-                    } ${item.completed ? "bg-gray-400" : "bg-gray-200"}`}
+                      item.completed ? "bg-gray-400" : "bg-gray-200"
+                    }`}
                     onClick={() =>
-                      !isExporting &&
                       updateTaskList(
                         selfCareItems,
                         setSelfCareItems,
@@ -1092,7 +1025,6 @@ export default function DailyPlanner({
                     }
                     className="flex-1 border-b border-gray-300 px-2 py-1 ml-2 focus:outline-none focus:border-gray-500"
                     placeholder=""
-                    readOnly={isExporting}
                   />
                 </div>
               ))}
@@ -1101,107 +1033,138 @@ export default function DailyPlanner({
         </div>
 
         {/* Status Buttons */}
-        <div className="flex flex-wrap mt-8 gap-2 justify-center">
+        <div className="flex flex-wrap mt-8 gap-3 justify-center">
           <button
-            className={`px-3 py-1 rounded flex items-center ${
-              taskStatus === "TO START" ? "bg-gray-200" : ""
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
+              taskStatus === "TO START"
+                ? "bg-blue-50 text-blue-700 border-2 border-blue-200"
+                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-blue-200 hover:bg-blue-50"
             }`}
-            onClick={() => !isExporting && setTaskStatus("TO START")}
-            disabled={isExporting}
+            onClick={() => setTaskStatus("TO START")}
           >
-            <div className="w-4 h-4 rounded-full border border-gray-600 mr-1"></div>{" "}
+            <div className="w-4 h-4 rounded-full border-2 border-current"></div>
             TO START
           </button>
           <button
-            className={`px-3 py-1 rounded flex items-center ${
-              taskStatus === "OK" ? "bg-gray-200" : ""
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
+              taskStatus === "OK"
+                ? "bg-green-50 text-green-700 border-2 border-green-200"
+                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-green-200 hover:bg-green-50"
             }`}
-            onClick={() => !isExporting && setTaskStatus("OK")}
-            disabled={isExporting}
+            onClick={() => setTaskStatus("OK")}
           >
-            <span className="mr-1">✓</span> OK
+            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+              <path
+                fillRule="evenodd"
+                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                clipRule="evenodd"
+              />
+            </svg>
+            OK
           </button>
           <button
-            className={`px-3 py-1 rounded flex items-center ${
-              taskStatus === "DELAY" ? "bg-gray-200" : ""
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
+              taskStatus === "DELAY"
+                ? "bg-yellow-50 text-yellow-700 border-2 border-yellow-200"
+                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-yellow-200 hover:bg-yellow-50"
             }`}
-            onClick={() => !isExporting && setTaskStatus("DELAY")}
-            disabled={isExporting}
+            onClick={() => setTaskStatus("DELAY")}
           >
-            <span className="mr-1">→</span> DELAY
+            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+              <path
+                fillRule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
+                clipRule="evenodd"
+              />
+            </svg>
+            DELAY
           </button>
           <button
-            className={`px-3 py-1 rounded flex items-center ${
-              taskStatus === "STUCK" ? "bg-gray-200" : ""
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
+              taskStatus === "STUCK"
+                ? "bg-orange-50 text-orange-700 border-2 border-orange-200"
+                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-orange-200 hover:bg-orange-50"
             }`}
-            onClick={() => !isExporting && setTaskStatus("STUCK")}
-            disabled={isExporting}
+            onClick={() => setTaskStatus("STUCK")}
           >
-            <span className="mr-1">⚠</span> STUCK
+            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+              <path
+                fillRule="evenodd"
+                d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                clipRule="evenodd"
+              />
+            </svg>
+            STUCK
           </button>
           <button
-            className={`px-3 py-1 rounded flex items-center ${
-              taskStatus === "CANCEL" ? "bg-gray-200" : ""
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
+              taskStatus === "CANCEL"
+                ? "bg-red-50 text-red-700 border-2 border-red-200"
+                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-red-200 hover:bg-red-50"
             }`}
-            onClick={() => !isExporting && setTaskStatus("CANCEL")}
-            disabled={isExporting}
+            onClick={() => setTaskStatus("CANCEL")}
           >
-            <span className="mr-1">✕</span> CANCEL
+            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+              <path
+                fillRule="evenodd"
+                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              />
+            </svg>
+            CANCEL
           </button>
         </div>
       </div>
 
       {/* Smart Features - excluded from printable content */}
-      {!isExporting && (
-        <div className="mt-8 border-t pt-6">
-          <h2 className="text-gray-600 uppercase tracking-wide mb-4">
-            SMART FEATURES
-          </h2>
+      <div className="mt-8 border-t pt-6">
+        <h2 className="text-gray-600 uppercase tracking-wide mb-4">
+          SMART FEATURES
+        </h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="auto-save"
-                checked={!!gistId}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    saveToGist();
-                  }
-                }}
-                className="rounded border-gray-300"
-              />
-              <label
-                htmlFor="auto-save"
-                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-              >
-                Auto-save (every 30 seconds)
-              </label>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="auto-save"
+              checked={!!gistId}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  saveToGist();
+                }
+              }}
+              className="rounded border-gray-300"
+            />
+            <label
+              htmlFor="auto-save"
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              Auto-save (every 30 seconds)
+            </label>
           </div>
+        </div>
 
-          <div className="mt-4">
-            <h3 className="text-sm font-medium mb-2">Task Completion Stats</h3>
-            <div className="flex flex-wrap gap-4 text-sm">
-              <div>
-                <span className="font-medium">Must Do: </span>
-                {mustDoItems.filter((item) => item.completed).length}/
-                {mustDoItems.filter((item) => item.text).length}
-              </div>
-              <div>
-                <span className="font-medium">Second Priority: </span>
-                {secondPriorityItems.filter((item) => item.completed).length}/
-                {secondPriorityItems.filter((item) => item.text).length}
-              </div>
-              <div>
-                <span className="font-medium">Extra Time: </span>
-                {lessonsOfTheDay.filter((item) => item.completed).length}/
-                {lessonsOfTheDay.filter((item) => item.text).length}
-              </div>
+        <div className="mt-4">
+          <h3 className="text-sm font-medium mb-2">Task Completion Stats</h3>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <div>
+              <span className="font-medium">Must Do: </span>
+              {mustDoItems.filter((item) => item.completed).length}/
+              {mustDoItems.filter((item) => item.text).length}
+            </div>
+            <div>
+              <span className="font-medium">Second Priority: </span>
+              {secondPriorityItems.filter((item) => item.completed).length}/
+              {secondPriorityItems.filter((item) => item.text).length}
+            </div>
+            <div>
+              <span className="font-medium">Extra Time: </span>
+              {lessonsOfTheDay.filter((item) => item.completed).length}/
+              {lessonsOfTheDay.filter((item) => item.text).length}
             </div>
           </div>
         </div>
-      )}
+      </div>
       <Toaster />
     </div>
   );
