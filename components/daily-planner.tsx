@@ -6,8 +6,8 @@ import { useEffect, useState, useRef } from "react";
 import { format } from "date-fns";
 import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/use-toast";
 import { Toaster } from "@/components/ui/toaster";
+import { useToast } from "@/hooks/use-toast";
 
 interface TaskItem {
   text: string;
@@ -321,7 +321,7 @@ export default function DailyPlanner({
 
         if (success) {
           toast({
-            title: "Auto-saved to Gist",
+            title: "Auto-saved",
             description: `Your planner for ${format(
               new Date(date),
               "MMMM d, yyyy"
@@ -393,6 +393,7 @@ export default function DailyPlanner({
           "MMMM d, yyyy"
         )} has been updated.`,
         variant: "default",
+        duration: 3000,
       });
     } else {
       toast({
@@ -400,6 +401,7 @@ export default function DailyPlanner({
         description:
           "Could not save changes. Please verify your Gist ID and token.",
         variant: "destructive",
+        duration: 4000,
       });
     }
     setIsSaving(false);
@@ -563,7 +565,7 @@ export default function DailyPlanner({
   return (
     <div
       ref={plannerRef}
-      className="max-w-4xl mx-auto p-3 sm:p-6 bg-white font-serif shadow-md rounded-lg"
+      className="max-w-4xl mx-auto p-3 sm:p-6 bg-white font-serif shadow-md rounded-lg relative"
     >
       {/* Printable content - excludes smart features */}
       <div ref={printableContentRef} className="bg-white">
