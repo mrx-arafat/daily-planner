@@ -2,12 +2,13 @@
 
 import type React from "react";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { format } from "date-fns";
-import { Save } from "lucide-react";
+import { Save, Download, Image, Loader2, CheckCircle2, Clock, AlertTriangle, XCircle, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/use-toast";
+import html2canvas from "html2canvas";
 
 interface TaskItem {
   text: string;
@@ -81,9 +82,12 @@ export default function DailyPlanner({
   );
   const [recurringTasks, setRecurringTasks] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [showExportPreview, setShowExportPreview] = useState(false);
 
   const plannerRef = useRef<HTMLDivElement>(null);
   const printableContentRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   // Function to get Gist content
   const getGistContent = async () => {
@@ -407,6 +411,58 @@ export default function DailyPlanner({
     setIsSaving(false);
   };
 
+  // Export to Image function
+  const exportToImage = useCallback(async () => {
+    if (!exportRef.current) return;
+
+    setIsExporting(true);
+    setShowExportPreview(true);
+
+    // Wait for the preview to render
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    try {
+      const canvas = await html2canvas(exportRef.current, {
+        scale: 2, // Higher resolution
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false,
+        windowWidth: 800,
+        windowHeight: exportRef.current.scrollHeight,
+      });
+
+      // Convert to blob and download
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `daily-planner-${date}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+
+          toast({
+            title: "Export Successful",
+            description: "Your daily planner has been saved as an image.",
+            duration: 3000,
+          });
+        }
+      }, "image/png", 1.0);
+    } catch (error) {
+      console.error("Export failed:", error);
+      toast({
+        title: "Export Failed",
+        description: "Could not export the planner. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
+      setShowExportPreview(false);
+    }
+  }, [date, toast]);
+
   // Replace the generateTimeSlots function with this updated version that shows all 24 hours
   const generateTimeSlots = () => {
     const slots = [];
@@ -426,6 +482,15 @@ export default function DailyPlanner({
   };
 
   const timeSlots = generateTimeSlots();
+
+  // Get filtered time slots for display
+  const getDisplayedTimeSlots = () => {
+    return timeSlots.filter(
+      (slot) =>
+        viewMode === "all" ||
+        (slot.hour >= startHour && slot.hour <= endHour)
+    );
+  };
 
   // Update items in the various lists
   const updateTaskList = (
@@ -485,16 +550,16 @@ export default function DailyPlanner({
 
       // Only copy incomplete tasks
       const incompleteMustDo = (parsedData.mustDoItems || [])
-        .filter((item) => !item.completed)
-        .map((item) => ({ ...item, completed: false }));
+        .filter((item: TaskItem) => !item.completed)
+        .map((item: TaskItem) => ({ ...item, completed: false }));
 
       const incompleteSecondPriority = (parsedData.secondPriorityItems || [])
-        .filter((item) => !item.completed)
-        .map((item) => ({ ...item, completed: false }));
+        .filter((item: TaskItem) => !item.completed)
+        .map((item: TaskItem) => ({ ...item, completed: false }));
 
-      const incompleteExtraTime = (parsedData.extraTimeItems || [])
-        .filter((item) => !item.completed)
-        .map((item) => ({ ...item, completed: false }));
+      const incompleteLessons = (parsedData.lessonsOfTheDay || [])
+        .filter((item: TaskItem) => !item.completed)
+        .map((item: TaskItem) => ({ ...item, completed: false }));
 
       setMustDoItems((prev) => {
         // Replace empty slots with incomplete tasks
@@ -530,16 +595,16 @@ export default function DailyPlanner({
         return newItems;
       });
 
-      setExtraTimeItems((prev) => {
+      setLessonsOfTheDay((prev) => {
         const newItems = [...prev];
         let incompleteIndex = 0;
         for (
           let i = 0;
-          i < newItems.length && incompleteIndex < incompleteExtraTime.length;
+          i < newItems.length && incompleteIndex < incompleteLessons.length;
           i++
         ) {
           if (!newItems[i].text) {
-            newItems[i] = incompleteExtraTime[incompleteIndex];
+            newItems[i] = incompleteLessons[incompleteIndex];
             incompleteIndex++;
           }
         }
@@ -561,613 +626,675 @@ export default function DailyPlanner({
   };
 
   const dayOfWeek = date ? new Date(date).getDay() : null;
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+  // Calculate completion stats
+  const getCompletionStats = () => {
+    const mustDoTotal = mustDoItems.filter((item) => item.text).length;
+    const mustDoCompleted = mustDoItems.filter((item) => item.completed && item.text).length;
+    const secondTotal = secondPriorityItems.filter((item) => item.text).length;
+    const secondCompleted = secondPriorityItems.filter((item) => item.completed && item.text).length;
+    const extraTotal = lessonsOfTheDay.filter((item) => item.text).length;
+    const extraCompleted = lessonsOfTheDay.filter((item) => item.completed && item.text).length;
+    const selfCareTotal = selfCareItems.filter((item) => item.text).length;
+    const selfCareCompleted = selfCareItems.filter((item) => item.completed && item.text).length;
+
+    const total = mustDoTotal + secondTotal + extraTotal + selfCareTotal;
+    const completed = mustDoCompleted + secondCompleted + extraCompleted + selfCareCompleted;
+
+    return {
+      mustDo: { total: mustDoTotal, completed: mustDoCompleted },
+      second: { total: secondTotal, completed: secondCompleted },
+      extra: { total: extraTotal, completed: extraCompleted },
+      selfCare: { total: selfCareTotal, completed: selfCareCompleted },
+      overall: { total, completed, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 },
+    };
+  };
+
+  const stats = getCompletionStats();
+
+  // Render task item with checkbox
+  const renderTaskItem = (
+    item: TaskItem,
+    index: number,
+    list: TaskItem[],
+    setList: React.Dispatch<React.SetStateAction<TaskItem[]>>,
+    prefix: string,
+    showExtras: boolean = true
+  ) => (
+    <div key={index} className="group flex items-start gap-3 py-2.5 px-3 rounded-xl hover:bg-gray-50/80 transition-all duration-200">
+      <button
+        type="button"
+        onClick={() => updateTaskList(list, setList, index, !item.completed, "completed")}
+        className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 transition-all duration-300 flex items-center justify-center ${
+          item.completed
+            ? "bg-gradient-to-br from-emerald-400 to-emerald-500 border-emerald-500 shadow-sm shadow-emerald-200"
+            : "border-gray-300 hover:border-emerald-400 hover:bg-emerald-50"
+        }`}
+      >
+        {item.completed && (
+          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        )}
+      </button>
+      <div className="flex-1 min-w-0">
+        <input
+          type="text"
+          value={item.text}
+          onChange={(e) => updateTaskList(list, setList, index, e.target.value)}
+          className={`w-full bg-transparent border-0 border-b border-transparent focus:border-gray-300 px-0 py-0.5 text-[15px] focus:outline-none focus:ring-0 transition-all duration-200 placeholder:text-gray-300 ${
+            item.completed ? "text-gray-400 line-through" : "text-gray-700"
+          }`}
+          placeholder="Add a task..."
+        />
+        {showExtras && item.text && (
+          <div className="flex items-center gap-2 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            <select
+              value={timeEstimates[`${prefix}-${index}`] || ""}
+              onChange={(e) =>
+                addTimeEstimate(`${prefix}-${index}`, Number.parseInt(e.target.value) || 0)
+              }
+              className="text-xs bg-gray-100 hover:bg-gray-200 rounded-lg px-2 py-1 border-0 text-gray-600 cursor-pointer transition-colors"
+            >
+              <option value="">Est. time</option>
+              <option value="15">15 min</option>
+              <option value="30">30 min</option>
+              <option value="45">45 min</option>
+              <option value="60">1 hour</option>
+              <option value="90">1.5 hrs</option>
+              <option value="120">2 hours</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => toggleRecurringTask(item.text)}
+              className={`text-xs px-2 py-1 rounded-lg transition-all duration-200 ${
+                recurringTasks.includes(item.text)
+                  ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                  : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+              }`}
+            >
+              {recurringTasks.includes(item.text) ? "Recurring" : "Make recurring"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Render printable task for export
+  const renderPrintableTask = (item: TaskItem, index: number) => {
+    if (!item.text) return null;
+    return (
+      <div key={index} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
+        <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+          item.completed ? "bg-emerald-500 border-emerald-500" : "border-gray-300"
+        }`}>
+          {item.completed && (
+            <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </div>
+        <span className={`text-sm ${item.completed ? "text-gray-400 line-through" : "text-gray-700"}`}>
+          {item.text}
+        </span>
+      </div>
+    );
+  };
 
   return (
-    <div
-      ref={plannerRef}
-      className="max-w-4xl mx-auto p-3 sm:p-6 bg-white font-serif shadow-md rounded-lg relative"
-    >
-      {/* Printable content - excludes smart features */}
-      <div ref={printableContentRef} className="bg-white">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-4 sm:gap-0">
-          <h1 className="text-3xl sm:text-4xl font-light text-gray-600">
-            DAILY PERSONAL PLANNER
-          </h1>
-          <div className="flex gap-2 w-full sm:w-auto">
-            <Button
-              onClick={saveToGist}
-              className="flex items-center gap-2 flex-1 sm:flex-auto justify-center"
-              disabled={isSaving}
-            >
-              {isSaving ? (
-                <>
-                  <svg
-                    className="animate-spin -ml-1 mr-2 h-4 w-4"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="h-4 w-4" />
-                  Save
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-4 sm:gap-0">
-          <div className="flex items-center w-full sm:w-auto sm:flex-1">
-            <span className="mr-2 text-gray-600 whitespace-nowrap">DATE:</span>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="border-b border-gray-400 px-2 py-1 focus:outline-none bg-transparent flex-1 w-full"
-            />
-          </div>
-
-          <div className="flex space-x-4 ml-0 sm:ml-4 self-center sm:self-auto">
-            {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
-              <div
-                key={index}
-                className={`w-6 h-6 text-center text-sm ${
-                  dayOfWeek === index ? "font-bold" : "text-gray-400"
-                }`}
+    <>
+      {/* Main Planner UI */}
+      <div
+        ref={plannerRef}
+        className="max-w-5xl mx-auto p-4 sm:p-8 bg-gradient-to-br from-white via-gray-50/30 to-white min-h-screen"
+      >
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-light text-gray-800 tracking-tight">
+                Daily Planner
+              </h1>
+              <p className="text-gray-500 mt-1">Organize your day, achieve your goals</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={saveToGist}
+                className="bg-gradient-to-r from-gray-800 to-gray-900 hover:from-gray-900 hover:to-black text-white shadow-lg shadow-gray-300/50 transition-all duration-300 hover:shadow-xl hover:shadow-gray-400/50"
+                disabled={isSaving}
               >
-                {day}
+                {isSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4 mr-2" />
+                    Save
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={exportToImage}
+                variant="outline"
+                className="border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all duration-300"
+                disabled={isExporting}
+              >
+                {isExporting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <Image className="h-4 w-4 mr-2" />
+                    Export Image
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {/* Date and Day Selection */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-gray-500 uppercase tracking-wider">Date</span>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:border-transparent transition-all"
+              />
+            </div>
+            <div className="flex gap-1 sm:ml-auto">
+              {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
+                <div
+                  key={index}
+                  className={`w-9 h-9 flex items-center justify-center rounded-full text-sm font-medium transition-all duration-300 ${
+                    dayOfWeek === index
+                      ? "bg-gradient-to-br from-gray-800 to-gray-900 text-white shadow-lg"
+                      : "text-gray-400 hover:bg-gray-100"
+                  }`}
+                  title={dayNames[index]}
+                >
+                  {day}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          {stats.overall.total > 0 && (
+            <div className="mt-4 p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-600">Today&apos;s Progress</span>
+                <span className="text-sm font-bold text-gray-800">{stats.overall.percentage}%</span>
               </div>
-            ))}
+              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full transition-all duration-500 ease-out"
+                  style={{ width: `${stats.overall.percentage}%` }}
+                />
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-gray-500">
+                <span>Must Do: {stats.mustDo.completed}/{stats.mustDo.total}</span>
+                <span>Priority: {stats.second.completed}/{stats.second.total}</span>
+                <span>Extra: {stats.extra.completed}/{stats.extra.total}</span>
+                <span>Self Care: {stats.selfCare.completed}/{stats.selfCare.total}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left Column - Schedule */}
+          <div className="space-y-6">
+            {/* Today's Schedule */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-gray-500" />
+                    Today&apos;s Schedule
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={viewMode}
+                      onChange={(e) => setViewMode(e.target.value as "all" | "custom")}
+                      className="text-sm bg-gray-100 hover:bg-gray-200 rounded-lg px-3 py-1.5 border-0 text-gray-600 cursor-pointer transition-colors"
+                    >
+                      <option value="all">All Hours</option>
+                      <option value="custom">Custom Range</option>
+                    </select>
+                    {viewMode === "custom" && (
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={startHour}
+                          onChange={(e) => setStartHour(Number.parseInt(e.target.value))}
+                          className="text-sm bg-gray-100 hover:bg-gray-200 rounded-lg px-2 py-1.5 border-0 text-gray-600 cursor-pointer transition-colors"
+                        >
+                          {Array.from({ length: 24 }, (_, i) => (
+                            <option key={i} value={i}>
+                              {i === 0 ? "12 AM" : i < 12 ? `${i} AM` : i === 12 ? "12 PM" : `${i - 12} PM`}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="text-gray-400">to</span>
+                        <select
+                          value={endHour}
+                          onChange={(e) => setEndHour(Number.parseInt(e.target.value))}
+                          className="text-sm bg-gray-100 hover:bg-gray-200 rounded-lg px-2 py-1.5 border-0 text-gray-600 cursor-pointer transition-colors"
+                        >
+                          {Array.from({ length: 24 }, (_, i) => (
+                            <option key={i} value={i}>
+                              {i === 0 ? "12 AM" : i < 12 ? `${i} AM` : i === 12 ? "12 PM" : `${i - 12} PM`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="p-4 max-h-[500px] overflow-y-auto">
+                <div className="space-y-1">
+                  {getDisplayedTimeSlots().map((slot, index) => (
+                    <div key={index} className="group flex items-center gap-3 py-2 hover:bg-gray-50 rounded-lg px-2 transition-colors">
+                      <div className="w-14 text-sm font-medium text-gray-400 group-hover:text-gray-600 transition-colors">
+                        {slot.display}
+                      </div>
+                      <input
+                        type="text"
+                        value={scheduleItems[slot.hour] || ""}
+                        onChange={(e) => updateScheduleItem(slot.hour, e.target.value)}
+                        className="flex-1 bg-transparent border-0 border-b border-gray-100 focus:border-gray-300 px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-0 transition-all placeholder:text-gray-300"
+                        placeholder="What's happening?"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Grateful For */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-amber-50 to-white">
+                <h2 className="text-lg font-semibold text-gray-800">I&apos;m Grateful For</h2>
+              </div>
+              <div className="p-4 space-y-3">
+                {gratefulItems.map((item, index) => (
+                  <div key={index} className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 text-sm font-medium">
+                      {index + 1}
+                    </div>
+                    <input
+                      type="text"
+                      value={item}
+                      onChange={(e) => updateGratefulItem(index, e.target.value)}
+                      className="flex-1 bg-transparent border-0 border-b border-gray-100 focus:border-amber-300 px-2 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-0 transition-all placeholder:text-gray-300"
+                      placeholder="What are you grateful for?"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Tasks */}
+          <div className="space-y-6">
+            {/* Must Do Today */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-red-50 to-white">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    Must Do Today
+                  </h2>
+                  {stats.mustDo.total > 0 && (
+                    <span className="text-sm text-gray-500">
+                      {stats.mustDo.completed}/{stats.mustDo.total}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="p-2">
+                {mustDoItems.map((item, index) =>
+                  renderTaskItem(item, index, mustDoItems, setMustDoItems, "must")
+                )}
+              </div>
+            </div>
+
+            {/* Second Priority */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-white">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    Second Priority
+                  </h2>
+                  {stats.second.total > 0 && (
+                    <span className="text-sm text-gray-500">
+                      {stats.second.completed}/{stats.second.total}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="p-2">
+                {secondPriorityItems.map((item, index) =>
+                  renderTaskItem(item, index, secondPriorityItems, setSecondPriorityItems, "second")
+                )}
+              </div>
+            </div>
+
+            {/* If There's Extra Time */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-white">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-purple-500" />
+                    If There&apos;s Extra Time
+                  </h2>
+                  {stats.extra.total > 0 && (
+                    <span className="text-sm text-gray-500">
+                      {stats.extra.completed}/{stats.extra.total}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="p-2">
+                {lessonsOfTheDay.map((item, index) =>
+                  renderTaskItem(item, index, lessonsOfTheDay, setLessonsOfTheDay, "extra")
+                )}
+              </div>
+            </div>
+
+            {/* Self Care */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-emerald-50 to-white">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    Self Care
+                  </h2>
+                  {stats.selfCare.total > 0 && (
+                    <span className="text-sm text-gray-500">
+                      {stats.selfCare.completed}/{stats.selfCare.total}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="p-2">
+                {selfCareItems.map((item, index) =>
+                  renderTaskItem(item, index, selfCareItems, setSelfCareItems, "selfcare", false)
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
-          {/* Left Column - Schedule */}
-          <div className="flex-1">
-            <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center flex-wrap gap-2">
-              <h2 className="text-gray-600 uppercase tracking-wide mb-2 sm:mb-0">
-                TODAY&apos;S SCHEDULE
-              </h2>
-              <div className="ml-0 sm:ml-auto flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <div className="flex items-center w-full sm:w-auto">
-                  <label className="text-sm text-gray-500 mr-2">View:</label>
-                  <select
-                    value={viewMode}
-                    onChange={(e) =>
-                      setViewMode(e.target.value as "all" | "custom")
-                    }
-                    className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
-                  >
-                    <option value="all">All Hours</option>
-                    <option value="custom">Custom Range</option>
-                  </select>
-                </div>
+        {/* Status Buttons */}
+        <div className="mt-8 p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+          <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4 text-center sm:text-left">Day Status</h3>
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 justify-center">
+            <button
+              className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl flex items-center justify-center gap-1.5 sm:gap-2 transition-all duration-300 font-medium text-sm sm:text-base ${
+                taskStatus === "TO START"
+                  ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-200"
+                  : "bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
+              }`}
+              onClick={() => setTaskStatus("TO START")}
+            >
+              <Circle className="w-4 h-4" />
+              <span className="hidden xs:inline">To Start</span>
+              <span className="xs:hidden">Start</span>
+            </button>
+            <button
+              className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl flex items-center justify-center gap-1.5 sm:gap-2 transition-all duration-300 font-medium text-sm sm:text-base ${
+                taskStatus === "OK"
+                  ? "bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-200"
+                  : "bg-gray-100 text-gray-600 hover:bg-emerald-50 hover:text-emerald-600"
+              }`}
+              onClick={() => setTaskStatus("OK")}
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Done
+            </button>
+            <button
+              className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl flex items-center justify-center gap-1.5 sm:gap-2 transition-all duration-300 font-medium text-sm sm:text-base ${
+                taskStatus === "DELAY"
+                  ? "bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-lg shadow-amber-200"
+                  : "bg-gray-100 text-gray-600 hover:bg-amber-50 hover:text-amber-600"
+              }`}
+              onClick={() => setTaskStatus("DELAY")}
+            >
+              <Clock className="w-4 h-4" />
+              Delay
+            </button>
+            <button
+              className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl flex items-center justify-center gap-1.5 sm:gap-2 transition-all duration-300 font-medium text-sm sm:text-base ${
+                taskStatus === "STUCK"
+                  ? "bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-200"
+                  : "bg-gray-100 text-gray-600 hover:bg-orange-50 hover:text-orange-600"
+              }`}
+              onClick={() => setTaskStatus("STUCK")}
+            >
+              <AlertTriangle className="w-4 h-4" />
+              Stuck
+            </button>
+            <button
+              className={`col-span-2 sm:col-span-1 px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl flex items-center justify-center gap-1.5 sm:gap-2 transition-all duration-300 font-medium text-sm sm:text-base ${
+                taskStatus === "CANCEL"
+                  ? "bg-gradient-to-r from-red-500 to-red-600 text-white shadow-lg shadow-red-200"
+                  : "bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600"
+              }`}
+              onClick={() => setTaskStatus("CANCEL")}
+            >
+              <XCircle className="w-4 h-4" />
+              Cancel
+            </button>
+          </div>
+        </div>
 
-                {viewMode === "custom" && (
-                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
-                    <div className="flex items-center w-1/2 sm:w-auto">
-                      <label className="text-sm text-gray-500 mr-2">
-                        From:
-                      </label>
-                      <select
-                        value={startHour}
-                        onChange={(e) =>
-                          setStartHour(Number.parseInt(e.target.value))
-                        }
-                        className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
-                      >
-                        {Array.from({ length: 24 }, (_, i) => (
-                          <option key={i} value={i}>
-                            {i === 0
-                              ? "12 AM"
-                              : i < 12
-                              ? `${i} AM`
-                              : i === 12
-                              ? "12 PM"
-                              : `${i - 12} PM`}
-                          </option>
+        {/* Smart Features Section */}
+        <div className="mt-6 p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+          <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Quick Actions</h3>
+          <div className="flex flex-col sm:flex-row flex-wrap gap-3">
+            <Button
+              variant="outline"
+              onClick={copyTasksFromPreviousDay}
+              className="text-sm w-full sm:w-auto justify-center"
+            >
+              Import Yesterday&apos;s Tasks
+            </Button>
+            <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg justify-center sm:justify-start">
+              <input
+                type="checkbox"
+                id="auto-save"
+                checked={!!gistId}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    saveToGist();
+                  }
+                }}
+                className="rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+              />
+              <label htmlFor="auto-save" className="text-sm text-gray-600">
+                Auto-save enabled (every 30s)
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <Toaster />
+      </div>
+
+      {/* Export Preview - Hidden but rendered for html2canvas */}
+      {showExportPreview && (
+        <div className="fixed left-[-9999px] top-0">
+          <div
+            ref={exportRef}
+            className="w-[800px] bg-white p-8"
+            style={{ fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif" }}
+          >
+            {/* Export Header */}
+            <div className="text-center mb-8 pb-6 border-b-2 border-gray-200">
+              <h1 className="text-3xl font-bold text-gray-800 mb-2">Daily Planner</h1>
+              <p className="text-lg text-gray-600">
+                {format(new Date(date), "EEEE, MMMM d, yyyy")}
+              </p>
+              {stats.overall.total > 0 && (
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <div className="h-3 w-48 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full"
+                      style={{ width: `${stats.overall.percentage}%` }}
+                    />
+                  </div>
+                  <span className="text-sm font-semibold text-gray-700">
+                    {stats.overall.percentage}% Complete
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-8">
+              {/* Left Column */}
+              <div className="space-y-6">
+                {/* Schedule - Only show hours with content */}
+                {Object.keys(scheduleItems).filter(key => scheduleItems[Number(key)]).length > 0 && (
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 mb-3 pb-2 border-b border-gray-200 flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-gray-500" />
+                      Today&apos;s Schedule
+                    </h2>
+                    <div className="space-y-2">
+                      {getDisplayedTimeSlots()
+                        .filter(slot => scheduleItems[slot.hour])
+                        .map((slot, index) => (
+                          <div key={index} className="flex items-start gap-3 py-1.5">
+                            <span className="w-14 text-sm font-medium text-gray-500">{slot.display}</span>
+                            <span className="text-sm text-gray-700 flex-1">{scheduleItems[slot.hour]}</span>
+                          </div>
                         ))}
-                      </select>
                     </div>
-                    <div className="flex items-center w-1/2 sm:w-auto">
-                      <label className="text-sm text-gray-500 mr-2">To:</label>
-                      <select
-                        value={endHour}
-                        onChange={(e) =>
-                          setEndHour(Number.parseInt(e.target.value))
-                        }
-                        className="border border-gray-300 rounded px-2 py-1 text-sm flex-1 sm:flex-auto"
-                      >
-                        {Array.from({ length: 24 }, (_, i) => (
-                          <option key={i} value={i}>
-                            {i === 0
-                              ? "12 AM"
-                              : i < 12
-                              ? `${i} AM`
-                              : i === 12
-                              ? "12 PM"
-                              : `${i - 12} PM`}
-                          </option>
-                        ))}
-                      </select>
+                  </div>
+                )}
+
+                {/* Grateful For */}
+                {gratefulItems.filter(item => item).length > 0 && (
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 mb-3 pb-2 border-b border-gray-200">
+                      I&apos;m Grateful For
+                    </h2>
+                    <div className="space-y-2">
+                      {gratefulItems.filter(item => item).map((item, index) => (
+                        <div key={index} className="flex items-center gap-2 py-1">
+                          <div className="w-5 h-5 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 text-xs font-medium">
+                            {index + 1}
+                          </div>
+                          <span className="text-sm text-gray-700">{item}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column */}
+              <div className="space-y-6">
+                {/* Must Do Today */}
+                {mustDoItems.filter(item => item.text).length > 0 && (
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 mb-3 pb-2 border-b border-gray-200 flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-red-500" />
+                      Must Do Today
+                      <span className="ml-auto text-sm font-normal text-gray-500">
+                        {stats.mustDo.completed}/{stats.mustDo.total}
+                      </span>
+                    </h2>
+                    <div className="space-y-0.5">
+                      {mustDoItems.map((item, index) => renderPrintableTask(item, index))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Second Priority */}
+                {secondPriorityItems.filter(item => item.text).length > 0 && (
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 mb-3 pb-2 border-b border-gray-200 flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-blue-500" />
+                      Second Priority
+                      <span className="ml-auto text-sm font-normal text-gray-500">
+                        {stats.second.completed}/{stats.second.total}
+                      </span>
+                    </h2>
+                    <div className="space-y-0.5">
+                      {secondPriorityItems.map((item, index) => renderPrintableTask(item, index))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Extra Time */}
+                {lessonsOfTheDay.filter(item => item.text).length > 0 && (
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 mb-3 pb-2 border-b border-gray-200 flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-purple-500" />
+                      If There&apos;s Extra Time
+                      <span className="ml-auto text-sm font-normal text-gray-500">
+                        {stats.extra.completed}/{stats.extra.total}
+                      </span>
+                    </h2>
+                    <div className="space-y-0.5">
+                      {lessonsOfTheDay.map((item, index) => renderPrintableTask(item, index))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Self Care */}
+                {selfCareItems.filter(item => item.text).length > 0 && (
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 mb-3 pb-2 border-b border-gray-200 flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                      Self Care
+                      <span className="ml-auto text-sm font-normal text-gray-500">
+                        {stats.selfCare.completed}/{stats.selfCare.total}
+                      </span>
+                    </h2>
+                    <div className="space-y-0.5">
+                      {selfCareItems.map((item, index) => renderPrintableTask(item, index))}
                     </div>
                   </div>
                 )}
               </div>
             </div>
 
-            <div>
-              {timeSlots
-                .filter(
-                  (slot) =>
-                    viewMode === "all" ||
-                    (slot.hour >= startHour && slot.hour <= endHour)
-                )
-                .map((slot, index) => (
-                  <div key={index} className="mb-4 flex items-center">
-                    <div className="w-12 sm:w-16 text-gray-600 text-sm sm:text-base">
-                      {slot.display}
-                    </div>
-                    <input
-                      type="text"
-                      value={scheduleItems[slot.hour] || ""}
-                      onChange={(e) =>
-                        updateScheduleItem(slot.hour, e.target.value)
-                      }
-                      className="flex-1 border-b border-gray-300 px-2 py-1 focus:outline-none focus:border-gray-500"
-                      placeholder=""
-                    />
-                  </div>
-                ))}
-            </div>
-
-            <div className="mt-8">
-              <h2 className="text-gray-600 uppercase tracking-wide mb-4">
-                I&apos;M GRATEFUL FOR
-              </h2>
-              {gratefulItems.map((item, index) => (
-                <input
-                  key={index}
-                  type="text"
-                  value={item}
-                  onChange={(e) => updateGratefulItem(index, e.target.value)}
-                  className="w-full border-b border-gray-300 px-2 py-1 mb-4 focus:outline-none focus:border-gray-500"
-                  placeholder=""
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Right Column - Task Lists */}
-          <div className="flex-1">
-            <div className="mb-8">
-              <h2 className="text-gray-600 uppercase tracking-wide mb-4">
-                MUST DO TODAY
-              </h2>
-              {mustDoItems.map((item, index) => (
-                <div key={index} className="flex items-center mb-4">
-                  <div
-                    className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      item.completed ? "bg-gray-400" : "bg-gray-200"
-                    }`}
-                    onClick={() =>
-                      updateTaskList(
-                        mustDoItems,
-                        setMustDoItems,
-                        index,
-                        !item.completed,
-                        "completed"
-                      )
-                    }
-                  ></div>
-                  <div className="flex-1 ml-2">
-                    <div className="flex flex-col sm:flex-row sm:items-center">
-                      <input
-                        type="text"
-                        value={item.text}
-                        onChange={(e) =>
-                          updateTaskList(
-                            mustDoItems,
-                            setMustDoItems,
-                            index,
-                            e.target.value
-                          )
-                        }
-                        className={`flex-1 border-b border-gray-300 px-2 py-1 focus:outline-none focus:border-gray-500 ${
-                          item.completed ? "text-gray-400 line-through" : ""
-                        }`}
-                        placeholder=""
-                      />
-                      {item.text && (
-                        <div className="flex items-center mt-1 sm:mt-0 sm:ml-2 space-x-2">
-                          <select
-                            value={timeEstimates[`must-${index}`] || ""}
-                            onChange={(e) =>
-                              addTimeEstimate(
-                                `must-${index}`,
-                                Number.parseInt(e.target.value) || 0
-                              )
-                            }
-                            className="border border-gray-200 rounded text-xs px-1"
-                          >
-                            <option value="">Time</option>
-                            <option value="15">15m</option>
-                            <option value="30">30m</option>
-                            <option value="45">45m</option>
-                            <option value="60">1h</option>
-                            <option value="90">1.5h</option>
-                            <option value="120">2h</option>
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => toggleRecurringTask(item.text)}
-                            className={`text-xs px-1 py-0.5 rounded ${
-                              recurringTasks.includes(item.text)
-                                ? "bg-gray-200 text-gray-700"
-                                : "bg-gray-100 text-gray-500"
-                            }`}
-                          >
-                            {recurringTasks.includes(item.text)
-                              ? "↻ Recurring"
-                              : "↻"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mb-8">
-              <h2 className="text-gray-600 uppercase tracking-wide mb-4">
-                SECOND PRIORITY
-              </h2>
-              {secondPriorityItems.map((item, index) => (
-                <div key={index} className="flex items-center mb-4">
-                  <div
-                    className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      item.completed ? "bg-gray-400" : "bg-gray-200"
-                    }`}
-                    onClick={() =>
-                      updateTaskList(
-                        secondPriorityItems,
-                        setSecondPriorityItems,
-                        index,
-                        !item.completed,
-                        "completed"
-                      )
-                    }
-                  ></div>
-                  <div className="flex-1 ml-2">
-                    <div className="flex flex-col sm:flex-row sm:items-center">
-                      <input
-                        type="text"
-                        value={item.text}
-                        onChange={(e) =>
-                          updateTaskList(
-                            secondPriorityItems,
-                            setSecondPriorityItems,
-                            index,
-                            e.target.value
-                          )
-                        }
-                        className={`flex-1 border-b border-gray-300 px-2 py-1 focus:outline-none focus:border-gray-500 ${
-                          item.completed ? "text-gray-400 line-through" : ""
-                        }`}
-                        placeholder=""
-                      />
-                      {item.text && (
-                        <div className="flex items-center mt-1 sm:mt-0 sm:ml-2 space-x-2">
-                          <select
-                            value={timeEstimates[`second-${index}`] || ""}
-                            onChange={(e) =>
-                              addTimeEstimate(
-                                `second-${index}`,
-                                Number.parseInt(e.target.value) || 0
-                              )
-                            }
-                            className="border border-gray-200 rounded text-xs px-1"
-                          >
-                            <option value="">Time</option>
-                            <option value="15">15m</option>
-                            <option value="30">30m</option>
-                            <option value="45">45m</option>
-                            <option value="60">1h</option>
-                            <option value="90">1.5h</option>
-                            <option value="120">2h</option>
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => toggleRecurringTask(item.text)}
-                            className={`text-xs px-1 py-0.5 rounded ${
-                              recurringTasks.includes(item.text)
-                                ? "bg-gray-200 text-gray-700"
-                                : "bg-gray-100 text-gray-500"
-                            }`}
-                          >
-                            {recurringTasks.includes(item.text)
-                              ? "↻ Recurring"
-                              : "↻"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mb-8">
-              <h2 className="text-gray-600 uppercase tracking-wide mb-4">
-                IF THERE&apos;S EXTRA TIME...
-              </h2>
-              {lessonsOfTheDay.map((item, index) => (
-                <div key={index} className="flex items-center mb-4">
-                  <div
-                    className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      item.completed ? "bg-gray-400" : "bg-gray-200"
-                    }`}
-                    onClick={() =>
-                      updateTaskList(
-                        lessonsOfTheDay,
-                        setLessonsOfTheDay,
-                        index,
-                        !item.completed,
-                        "completed"
-                      )
-                    }
-                  ></div>
-                  <div className="flex-1 ml-2">
-                    <div className="flex flex-col sm:flex-row sm:items-center">
-                      <input
-                        type="text"
-                        value={item.text}
-                        onChange={(e) =>
-                          updateTaskList(
-                            lessonsOfTheDay,
-                            setLessonsOfTheDay,
-                            index,
-                            e.target.value
-                          )
-                        }
-                        className={`flex-1 border-b border-gray-300 px-2 py-1 focus:outline-none focus:border-gray-500 ${
-                          item.completed ? "text-gray-400 line-through" : ""
-                        }`}
-                        placeholder=""
-                      />
-                      {item.text && (
-                        <div className="flex items-center mt-1 sm:mt-0 sm:ml-2 space-x-2">
-                          <select
-                            value={timeEstimates[`extra-${index}`] || ""}
-                            onChange={(e) =>
-                              addTimeEstimate(
-                                `extra-${index}`,
-                                Number.parseInt(e.target.value) || 0
-                              )
-                            }
-                            className="border border-gray-200 rounded text-xs px-1"
-                          >
-                            <option value="">Time</option>
-                            <option value="15">15m</option>
-                            <option value="30">30m</option>
-                            <option value="45">45m</option>
-                            <option value="60">1h</option>
-                            <option value="90">1.5h</option>
-                            <option value="120">2h</option>
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => toggleRecurringTask(item.text)}
-                            className={`text-xs px-1 py-0.5 rounded ${
-                              recurringTasks.includes(item.text)
-                                ? "bg-gray-200 text-gray-700"
-                                : "bg-gray-100 text-gray-500"
-                            }`}
-                          >
-                            {recurringTasks.includes(item.text)
-                              ? "↻ Recurring"
-                              : "↻"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mb-8">
-              <h2 className="text-gray-600 uppercase tracking-wide mb-4">
-                SELF CARE
-              </h2>
-              {selfCareItems.map((item, index) => (
-                <div key={index} className="flex items-center mb-4">
-                  <div
-                    className={`w-4 h-4 rounded-full border border-gray-400 ${
-                      item.completed ? "bg-gray-400" : "bg-gray-200"
-                    }`}
-                    onClick={() =>
-                      updateTaskList(
-                        selfCareItems,
-                        setSelfCareItems,
-                        index,
-                        !item.completed,
-                        "completed"
-                      )
-                    }
-                  ></div>
-                  <input
-                    type="text"
-                    value={item.text}
-                    onChange={(e) =>
-                      updateTaskList(
-                        selfCareItems,
-                        setSelfCareItems,
-                        index,
-                        e.target.value
-                      )
-                    }
-                    className="flex-1 border-b border-gray-300 px-2 py-1 ml-2 focus:outline-none focus:border-gray-500"
-                    placeholder=""
-                  />
-                </div>
-              ))}
+            {/* Status Footer */}
+            <div className="mt-8 pt-6 border-t-2 border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">Day Status:</span>
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  taskStatus === "OK" ? "bg-emerald-100 text-emerald-700" :
+                  taskStatus === "DELAY" ? "bg-amber-100 text-amber-700" :
+                  taskStatus === "STUCK" ? "bg-orange-100 text-orange-700" :
+                  taskStatus === "CANCEL" ? "bg-red-100 text-red-700" :
+                  "bg-blue-100 text-blue-700"
+                }`}>
+                  {taskStatus === "OK" ? "Completed" :
+                   taskStatus === "TO START" ? "To Start" :
+                   taskStatus.charAt(0) + taskStatus.slice(1).toLowerCase()}
+                </span>
+              </div>
+              <div className="text-xs text-gray-400">
+                Generated with Daily Planner
+              </div>
             </div>
           </div>
         </div>
-
-        {/* Status Buttons */}
-        <div className="flex flex-wrap mt-8 gap-3 justify-center">
-          <button
-            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
-              taskStatus === "TO START"
-                ? "bg-blue-50 text-blue-700 border-2 border-blue-200"
-                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-blue-200 hover:bg-blue-50"
-            }`}
-            onClick={() => setTaskStatus("TO START")}
-          >
-            <div className="w-4 h-4 rounded-full border-2 border-current"></div>
-            TO START
-          </button>
-          <button
-            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
-              taskStatus === "OK"
-                ? "bg-green-50 text-green-700 border-2 border-green-200"
-                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-green-200 hover:bg-green-50"
-            }`}
-            onClick={() => setTaskStatus("OK")}
-          >
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                clipRule="evenodd"
-              />
-            </svg>
-            OK
-          </button>
-          <button
-            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
-              taskStatus === "DELAY"
-                ? "bg-yellow-50 text-yellow-700 border-2 border-yellow-200"
-                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-yellow-200 hover:bg-yellow-50"
-            }`}
-            onClick={() => setTaskStatus("DELAY")}
-          >
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                clipRule="evenodd"
-              />
-            </svg>
-            DELAY
-          </button>
-          <button
-            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
-              taskStatus === "STUCK"
-                ? "bg-orange-50 text-orange-700 border-2 border-orange-200"
-                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-orange-200 hover:bg-orange-50"
-            }`}
-            onClick={() => setTaskStatus("STUCK")}
-          >
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                clipRule="evenodd"
-              />
-            </svg>
-            STUCK
-          </button>
-          <button
-            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-md ${
-              taskStatus === "CANCEL"
-                ? "bg-red-50 text-red-700 border-2 border-red-200"
-                : "bg-gray-50 text-gray-600 border border-gray-200 hover:border-red-200 hover:bg-red-50"
-            }`}
-            onClick={() => setTaskStatus("CANCEL")}
-          >
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                clipRule="evenodd"
-              />
-            </svg>
-            CANCEL
-          </button>
-        </div>
-      </div>
-
-      {/* Smart Features - excluded from printable content */}
-      <div className="mt-8 border-t pt-6">
-        <h2 className="text-gray-600 uppercase tracking-wide mb-4">
-          SMART FEATURES
-        </h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="auto-save"
-              checked={!!gistId}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  saveToGist();
-                }
-              }}
-              className="rounded border-gray-300"
-            />
-            <label
-              htmlFor="auto-save"
-              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-            >
-              Auto-save (every 30 seconds)
-            </label>
-          </div>
-        </div>
-
-        <div className="mt-4">
-          <h3 className="text-sm font-medium mb-2">Task Completion Stats</h3>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <div>
-              <span className="font-medium">Must Do: </span>
-              {mustDoItems.filter((item) => item.completed).length}/
-              {mustDoItems.filter((item) => item.text).length}
-            </div>
-            <div>
-              <span className="font-medium">Second Priority: </span>
-              {secondPriorityItems.filter((item) => item.completed).length}/
-              {secondPriorityItems.filter((item) => item.text).length}
-            </div>
-            <div>
-              <span className="font-medium">Extra Time: </span>
-              {lessonsOfTheDay.filter((item) => item.completed).length}/
-              {lessonsOfTheDay.filter((item) => item.text).length}
-            </div>
-          </div>
-        </div>
-      </div>
-      <Toaster />
-    </div>
+      )}
+    </>
   );
 }
